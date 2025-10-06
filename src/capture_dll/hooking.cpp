@@ -3,6 +3,10 @@
 #include <iostream>
 #include <d3d11.h>
 
+#ifdef MINHOOK_AVAILABLE
+#include <MinHook.h>
+#endif
+
 // Static member initialization
 void* DirectXHook::s_originalPresent = nullptr;
 void* DirectXHook::s_originalPresent1 = nullptr;
@@ -22,6 +26,15 @@ bool DirectXHook::Initialize() {
     
     OutputDebugStringW(L"[Capture DLL] Initializing DirectX hooks...\n");
     
+#ifdef MINHOOK_AVAILABLE
+    // Initialize MinHook
+    MH_STATUS status = MH_Initialize();
+    if (status != MH_OK && status != MH_ERROR_ALREADY_INITIALIZED) {
+        OutputDebugStringW(L"[Capture DLL] Failed to initialize MinHook\n");
+        return false;
+    }
+#endif
+    
     // Detect DirectX version
     if (!DetectDirectXVersion()) {
         OutputDebugStringW(L"[Capture DLL] Failed to detect DirectX version\n");
@@ -38,6 +51,10 @@ void DirectXHook::Shutdown() {
         RemoveHooks();
     }
     
+#ifdef MINHOOK_AVAILABLE
+    MH_Uninitialize();
+#endif
+    
     s_initialized = false;
     OutputDebugStringW(L"[Capture DLL] DirectX hooks shut down\n");
 }
@@ -49,17 +66,83 @@ bool DirectXHook::InstallHooks() {
     
     OutputDebugStringW(L"[Capture DLL] Installing hooks...\n");
     
-    // TODO: Use MinHook or similar library to hook Present functions
-    // For now, this is a placeholder
+#ifdef MINHOOK_AVAILABLE
+    // Create a temporary D3D11 device and swap chain to get the Present function address
+    D3D_FEATURE_LEVEL featureLevel;
+    DXGI_SWAP_CHAIN_DESC swapChainDesc = {};
+    swapChainDesc.BufferCount = 1;
+    swapChainDesc.BufferDesc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
+    swapChainDesc.BufferUsage = DXGI_USAGE_RENDER_TARGET_OUTPUT;
+    swapChainDesc.OutputWindow = GetDesktopWindow();
+    swapChainDesc.SampleDesc.Count = 1;
+    swapChainDesc.Windowed = TRUE;
+    swapChainDesc.SwapEffect = DXGI_SWAP_EFFECT_DISCARD;
     
-    // This would typically involve:
-    // 1. Creating a dummy D3D11 device to get the Present function address
-    // 2. Using a hooking library to replace the Present function
-    // 3. Storing the original function pointer
+    ID3D11Device* pTempDevice = nullptr;
+    ID3D11DeviceContext* pTempContext = nullptr;
+    IDXGISwapChain* pTempSwapChain = nullptr;
     
-    OutputDebugStringW(L"[Capture DLL] Hooks installed (placeholder)\n");
+    HRESULT hr = D3D11CreateDeviceAndSwapChain(
+        nullptr,
+        D3D_DRIVER_TYPE_HARDWARE,
+        nullptr,
+        0,
+        nullptr,
+        0,
+        D3D11_SDK_VERSION,
+        &swapChainDesc,
+        &pTempSwapChain,
+        &pTempDevice,
+        &featureLevel,
+        &pTempContext
+    );
+    
+    if (FAILED(hr) || !pTempSwapChain) {
+        OutputDebugStringW(L"[Capture DLL] Failed to create temporary D3D11 device\n");
+        return false;
+    }
+    
+    // Get the Present function address from the swap chain's vtable
+    void** swapChainVTable = *(void***)pTempSwapChain;
+    void* presentAddress = swapChainVTable[8]; // Present is at index 8 in IDXGISwapChain vtable
+    
+    // Create hook for Present
+    MH_STATUS status = MH_CreateHook(
+        presentAddress,
+        &HookedPresent,
+        reinterpret_cast<void**>(&s_originalPresent)
+    );
+    
+    if (status != MH_OK) {
+        OutputDebugStringW(L"[Capture DLL] Failed to create Present hook\n");
+        pTempSwapChain->Release();
+        pTempContext->Release();
+        pTempDevice->Release();
+        return false;
+    }
+    
+    // Enable the hook
+    status = MH_EnableHook(presentAddress);
+    if (status != MH_OK) {
+        OutputDebugStringW(L"[Capture DLL] Failed to enable Present hook\n");
+        pTempSwapChain->Release();
+        pTempContext->Release();
+        pTempDevice->Release();
+        return false;
+    }
+    
+    // Cleanup temporary objects
+    pTempSwapChain->Release();
+    pTempContext->Release();
+    pTempDevice->Release();
+    
+    OutputDebugStringW(L"[Capture DLL] Hooks installed successfully\n");
     s_hooksInstalled = true;
     return true;
+#else
+    OutputDebugStringW(L"[Capture DLL] MinHook not available, hooks not installed\n");
+    return false;
+#endif
 }
 
 bool DirectXHook::RemoveHooks() {
@@ -69,7 +152,12 @@ bool DirectXHook::RemoveHooks() {
     
     OutputDebugStringW(L"[Capture DLL] Removing hooks...\n");
     
-    // TODO: Use MinHook to unhook functions
+#ifdef MINHOOK_AVAILABLE
+    if (s_originalPresent) {
+        MH_DisableHook(MH_ALL_HOOKS);
+        MH_RemoveHook(MH_ALL_HOOKS);
+    }
+#endif
     
     s_hooksInstalled = false;
     OutputDebugStringW(L"[Capture DLL] Hooks removed\n");
@@ -109,7 +197,7 @@ HRESULT STDMETHODCALLTYPE DirectXHook::HookedPresent(
     // Capture the frame
     CaptureFrame(pSwapChain);
     
-    // Call original Present
+    // CRUCIAL: Call original Present to prevent the game from freezing
     typedef HRESULT(STDMETHODCALLTYPE* PresentFunc)(IDXGISwapChain*, UINT, UINT);
     PresentFunc originalFunc = (PresentFunc)s_originalPresent;
     
@@ -129,7 +217,7 @@ HRESULT STDMETHODCALLTYPE DirectXHook::HookedPresent1(
     // Capture the frame
     CaptureFrame(pSwapChain);
     
-    // Call original Present1
+    // CRUCIAL: Call original Present1 to prevent the game from freezing
     typedef HRESULT(STDMETHODCALLTYPE* Present1Func)(IDXGISwapChain1*, UINT, UINT, const DXGI_PRESENT_PARAMETERS*);
     Present1Func originalFunc = (Present1Func)s_originalPresent1;
     
@@ -158,22 +246,72 @@ void DirectXHook::CaptureFrame(IDXGISwapChain* pSwapChain) {
         D3D11_TEXTURE2D_DESC desc;
         pBackBuffer->GetDesc(&desc);
         
-        // Update shared data
-        static uint32_t frameCounter = 0;
-        g_pSharedData->width = desc.Width;
-        g_pSharedData->height = desc.Height;
-        g_pSharedData->format = desc.Format;
-        g_pSharedData->frameNumber = ++frameCounter;
-        g_pSharedData->timestamp = GetTickCount64();
-        g_pSharedData->isValid = true;
+        // Get device from back buffer
+        ID3D11Device* pDevice = nullptr;
+        pBackBuffer->GetDevice(&pDevice);
         
-        // TODO: Actually copy texture data to shared memory
-        // This would involve creating a staging texture and copying data
+        if (pDevice) {
+            ID3D11DeviceContext* pContext = nullptr;
+            pDevice->GetImmediateContext(&pContext);
+            
+            if (pContext) {
+                // Create staging texture for CPU readback
+                D3D11_TEXTURE2D_DESC stagingDesc = desc;
+                stagingDesc.Usage = D3D11_USAGE_STAGING;
+                stagingDesc.BindFlags = 0;
+                stagingDesc.CPUAccessFlags = D3D11_CPU_ACCESS_READ;
+                stagingDesc.MiscFlags = 0;
+                
+                ID3D11Texture2D* pStagingTexture = nullptr;
+                hr = pDevice->CreateTexture2D(&stagingDesc, nullptr, &pStagingTexture);
+                
+                if (SUCCEEDED(hr) && pStagingTexture) {
+                    // Copy back buffer to staging texture
+                    pContext->CopyResource(pStagingTexture, pBackBuffer);
+                    
+                    // Map the staging texture to read pixel data
+                    D3D11_MAPPED_SUBRESOURCE mappedResource;
+                    hr = pContext->Map(pStagingTexture, 0, D3D11_MAP_READ, 0, &mappedResource);
+                    
+                    if (SUCCEEDED(hr)) {
+                        // Update shared data
+                        static uint32_t frameCounter = 0;
+                        g_pSharedData->width = desc.Width;
+                        g_pSharedData->height = desc.Height;
+                        g_pSharedData->format = desc.Format;
+                        g_pSharedData->frameNumber = ++frameCounter;
+                        g_pSharedData->timestamp = GetTickCount64();
+                        g_pSharedData->isValid = true;
+                        
+                        // Copy pixel data to shared memory (up to MAX_FRAME_SIZE)
+                        size_t dataSize = desc.Width * desc.Height * 4; // Assuming RGBA
+                        if (dataSize <= MAX_FRAME_SIZE) {
+                            const uint8_t* srcData = static_cast<const uint8_t*>(mappedResource.pData);
+                            for (UINT row = 0; row < desc.Height; ++row) {
+                                memcpy(
+                                    g_pSharedData->pixelData + row * desc.Width * 4,
+                                    srcData + row * mappedResource.RowPitch,
+                                    desc.Width * 4
+                                );
+                            }
+                        }
+                        
+                        pContext->Unmap(pStagingTexture, 0);
+                        
+                        // Signal frame ready
+                        SetEvent(g_hFrameReadyEvent);
+                    }
+                    
+                    pStagingTexture->Release();
+                }
+                
+                pContext->Release();
+            }
+            
+            pDevice->Release();
+        }
         
         pBackBuffer->Release();
-        
-        // Signal frame ready
-        SetEvent(g_hFrameReadyEvent);
     }
     
     // Unlock shared memory
