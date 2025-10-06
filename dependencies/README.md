@@ -4,6 +4,39 @@ This directory is for external libraries required by the Swiper project.
 
 ## Required Libraries
 
+### Dear ImGui (Required for GUI)
+
+Dear ImGui is a bloat-free graphical user interface library for C++.
+
+**Download:**
+- GitHub: https://github.com/ocornut/imgui
+- Download the latest release or clone the repository
+
+**Installation:**
+1. Download Dear ImGui source code
+2. Create an `imgui` subdirectory here: `dependencies/imgui/`
+3. Place the following files:
+   ```
+   dependencies/imgui/
+   ├── imgui.h
+   ├── imgui.cpp
+   ├── imgui_draw.cpp
+   ├── imgui_tables.cpp
+   ├── imgui_widgets.cpp
+   ├── imgui_internal.h
+   ├── imconfig.h
+   ├── imstb_rectpack.h
+   ├── imstb_textedit.h
+   ├── imstb_truetype.h
+   └── backends/
+       ├── imgui_impl_win32.h
+       ├── imgui_impl_win32.cpp
+       ├── imgui_impl_dx11.h
+       └── imgui_impl_dx11.cpp
+   ```
+
+**Note:** CMake will automatically detect and use ImGui if present.
+
 ### MinHook (Recommended)
 
 MinHook is a minimalistic x86/x64 API hooking library for Windows.
@@ -30,24 +63,7 @@ MinHook is a minimalistic x86/x64 API hooking library for Windows.
 
 **Integration with CMake:**
 
-After adding MinHook, update `src/capture_dll/CMakeLists.txt`:
-
-```cmake
-# Add MinHook include directory
-target_include_directories(capture_dll PRIVATE
-    ${CMAKE_CURRENT_SOURCE_DIR}
-    ${CMAKE_SOURCE_DIR}/src/main
-    ${CMAKE_SOURCE_DIR}/dependencies/minhook/include  # Add this line
-)
-
-# Link MinHook library
-target_link_libraries(capture_dll PRIVATE
-    kernel32
-    d3d11
-    dxgi
-    ${CMAKE_SOURCE_DIR}/dependencies/minhook/lib/libMinHook.x64.lib  # Add this line
-)
-```
+CMake will automatically detect and link MinHook if it is found in the dependencies directory. No manual CMakeLists.txt editing is required.
 
 ## Alternative Hooking Libraries
 
@@ -84,6 +100,7 @@ The DirectX headers are typically included with the Windows SDK. If you need to 
 
 When adding dependencies, ensure their licenses are compatible with your project:
 
+- **Dear ImGui**: MIT License (permissive)
 - **MinHook**: BSD 2-Clause License (permissive)
 - **Detours**: MIT License (commercial use requires separate agreement)
 - **PolyHook**: MIT License (permissive)

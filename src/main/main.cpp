@@ -3,16 +3,24 @@
 #include <string>
 #include "ipc.h"
 #include "injector.h"
+
+#ifdef IMGUI_AVAILABLE
+#include "imgui_ui.h"
+#else
 #include "ui.h"
+#endif
 
 // Global variables
 HWND g_hWnd = nullptr;
 HWND g_hMainWindow = nullptr;
 bool g_isRunning = true;
-HANDLE g_hSharedMemory = nullptr;
+
+// IPC using RAII wrappers from ipc.h
+UniqueHandle g_hSharedMemory;
+UniqueHandle g_hFrameReadyEvent;
+UniqueHandle g_hMemoryMutex;
+std::unique_ptr<MappedView> g_pSharedMemoryView;
 SharedFrameData* g_pSharedData = nullptr;
-HANDLE g_hFrameReadyEvent = nullptr;
-HANDLE g_hMemoryMutex = nullptr;
 
 // Forward declarations
 LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam);
@@ -25,6 +33,11 @@ void RenderLoop();
 void ProcessSelection();
 
 int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nCmdShow) {
+#ifdef IMGUI_AVAILABLE
+    // Use ImGui-based GUI
+    return RunImGuiApplication(hInstance);
+#else
+    // Fallback to Win32 UI with console
     // Enable console for debugging
     AllocConsole();
     FILE* fDummy;
@@ -95,6 +108,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
     FreeConsole();
     
     return 0;
+#endif
 }
 
 LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam) {
@@ -246,42 +260,43 @@ bool InitializeMainWindow(HINSTANCE hInstance) {
 }
 
 bool InitializeIPC() {
-    // Create shared memory
-    g_hSharedMemory = CreateFileMappingW(
+    // Create shared memory using RAII wrapper
+    g_hSharedMemory.reset(CreateFileMappingW(
         INVALID_HANDLE_VALUE,
         nullptr,
         PAGE_READWRITE,
         0,
         sizeof(SharedFrameData),
         SHARED_MEMORY_NAME
-    );
+    ));
     
     if (!g_hSharedMemory) {
         std::wcerr << L"Failed to create shared memory: " << GetLastError() << std::endl;
         return false;
     }
     
-    // Map shared memory
-    g_pSharedData = (SharedFrameData*)MapViewOfFile(
-        g_hSharedMemory,
+    // Map shared memory using RAII wrapper
+    g_pSharedMemoryView = std::make_unique<MappedView>(
+        g_hSharedMemory.get(),
         FILE_MAP_ALL_ACCESS,
-        0, 0,
         sizeof(SharedFrameData)
     );
     
-    if (!g_pSharedData) {
+    if (!g_pSharedMemoryView || !(*g_pSharedMemoryView)) {
         std::wcerr << L"Failed to map shared memory: " << GetLastError() << std::endl;
-        CloseHandle(g_hSharedMemory);
+        g_hSharedMemory.reset();
         return false;
     }
+    
+    g_pSharedData = g_pSharedMemoryView->as<SharedFrameData>();
     
     // Initialize shared data
     ZeroMemory(g_pSharedData, sizeof(SharedFrameData));
     g_pSharedData->isValid = false;
     
-    // Create synchronization objects
-    g_hFrameReadyEvent = CreateEventW(nullptr, FALSE, FALSE, FRAME_READY_EVENT_NAME);
-    g_hMemoryMutex = CreateMutexW(nullptr, FALSE, MEMORY_MUTEX_NAME);
+    // Create synchronization objects using RAII wrappers
+    g_hFrameReadyEvent.reset(CreateEventW(nullptr, FALSE, FALSE, FRAME_READY_EVENT_NAME));
+    g_hMemoryMutex.reset(CreateMutexW(nullptr, FALSE, MEMORY_MUTEX_NAME));
     
     if (!g_hFrameReadyEvent || !g_hMemoryMutex) {
         std::wcerr << L"Failed to create synchronization objects" << std::endl;
@@ -294,36 +309,23 @@ bool InitializeIPC() {
 }
 
 void CleanupIPC() {
-    if (g_pSharedData) {
-        UnmapViewOfFile(g_pSharedData);
-        g_pSharedData = nullptr;
-    }
-    
-    if (g_hSharedMemory) {
-        CloseHandle(g_hSharedMemory);
-        g_hSharedMemory = nullptr;
-    }
-    
-    if (g_hFrameReadyEvent) {
-        CloseHandle(g_hFrameReadyEvent);
-        g_hFrameReadyEvent = nullptr;
-    }
-    
-    if (g_hMemoryMutex) {
-        CloseHandle(g_hMemoryMutex);
-        g_hMemoryMutex = nullptr;
-    }
+    // RAII wrappers will automatically cleanup on destruction
+    g_pSharedData = nullptr;
+    g_pSharedMemoryView.reset();
+    g_hSharedMemory.reset();
+    g_hFrameReadyEvent.reset();
+    g_hMemoryMutex.reset();
 }
 
 void RenderLoop() {
     // Wait for frame ready event (non-blocking)
-    DWORD result = WaitForSingleObject(g_hFrameReadyEvent, 0);
+    DWORD result = WaitForSingleObject(g_hFrameReadyEvent.get(), 0);
     if (result != WAIT_OBJECT_0) {
         return;
     }
     
     // Lock shared memory
-    if (WaitForSingleObject(g_hMemoryMutex, 100) != WAIT_OBJECT_0) {
+    if (WaitForSingleObject(g_hMemoryMutex.get(), 100) != WAIT_OBJECT_0) {
         return;
     }
     
@@ -341,7 +343,7 @@ void RenderLoop() {
     }
     
     // Unlock shared memory
-    ReleaseMutex(g_hMemoryMutex);
+    ReleaseMutex(g_hMemoryMutex.get());
 }
 
 void ProcessSelection() {
