@@ -1,0 +1,61 @@
+name: Release Build
+
+on:
+  release:
+    types: [created, published]
+
+jobs:
+  build:
+    runs-on: windows-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Setup MSBuild
+      uses: microsoft/setup-msbuild@v1.1
+      
+    - name: Setup CMake
+      uses: lukka/get-cmake@latest
+      
+    - name: Configure CMake
+      run: |
+        mkdir build
+        cd build
+        cmake .. -G "Visual Studio 17 2022" -A x64
+        
+    - name: Build Project
+      run: |
+        cd build
+        cmake --build . --config Release
+        
+    - name: Create Release Package
+      run: |
+        mkdir release-package
+        copy build\bin\Release\swiper.exe release-package\
+        copy build\lib\Release\capture.dll release-package\
+        
+    - name: Package as Single Executable
+      run: |
+        cd release-package
+        echo "Swiper.exe and capture.dll packaged for release"
+        
+    - name: Upload Release Assets
+      uses: actions/upload-release-asset@v1
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      with:
+        upload_url: ${{ github.event.release.upload_url }}
+        asset_path: ./release-package/swiper.exe
+        asset_name: swiper.exe
+        asset_content_type: application/octet-stream
+        
+    - name: Upload DLL Asset
+      uses: actions/upload-release-asset@v1
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      with:
+        upload_url: ${{ github.event.release.upload_url }}
+        asset_path: ./release-package/capture.dll
+        asset_name: capture.dll
+        asset_content_type: application/octet-stream

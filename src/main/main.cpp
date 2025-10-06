@@ -3,9 +3,11 @@
 #include <string>
 #include "ipc.h"
 #include "injector.h"
+#include "ui.h"
 
 // Global variables
 HWND g_hWnd = nullptr;
+HWND g_hMainWindow = nullptr;
 bool g_isRunning = true;
 HANDLE g_hSharedMemory = nullptr;
 SharedFrameData* g_pSharedData = nullptr;
@@ -14,7 +16,9 @@ HANDLE g_hMemoryMutex = nullptr;
 
 // Forward declarations
 LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam);
+LRESULT CALLBACK MainWindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam);
 bool InitializeWindow(HINSTANCE hInstance);
+bool InitializeMainWindow(HINSTANCE hInstance);
 bool InitializeIPC();
 void CleanupIPC();
 void RenderLoop();
@@ -37,18 +41,22 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
         return 1;
     }
     
-    // Initialize window
-    if (!InitializeWindow(hInstance)) {
-        std::wcerr << L"Failed to initialize window" << std::endl;
+    // Initialize main UI window
+    if (!InitializeMainWindow(hInstance)) {
+        std::wcerr << L"Failed to initialize main window" << std::endl;
         CleanupIPC();
         return 1;
     }
     
-    std::wcout << L"Window created successfully" << std::endl;
-    std::wcout << L"\nCommands:" << std::endl;
-    std::wcout << L"  1 - List processes" << std::endl;
-    std::wcout << L"  2 - Inject DLL into process" << std::endl;
-    std::wcout << L"  ESC - Exit application" << std::endl;
+    // Initialize projection window
+    if (!InitializeWindow(hInstance)) {
+        std::wcerr << L"Failed to initialize projection window" << std::endl;
+        CleanupIPC();
+        return 1;
+    }
+    
+    std::wcout << L"Windows created successfully" << std::endl;
+    std::wcout << L"\nUI is ready - use the Settings and Projection tabs" << std::endl;
     
     // Main message loop
     MSG msg = {};
@@ -63,37 +71,6 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
             DispatchMessage(&msg);
         }
         
-        // Check for console input
-        if (_kbhit()) {
-            int key = _getch();
-            if (key == '1') {
-                ProcessSelection();
-            } else if (key == '2') {
-                std::wcout << L"\nEnter process ID to inject: ";
-                DWORD pid;
-                std::wcin >> pid;
-                
-                std::wstring dllPath = L"capture.dll";
-                // Get full path to DLL
-                wchar_t exePath[MAX_PATH];
-                GetModuleFileNameW(nullptr, exePath, MAX_PATH);
-                std::wstring fullPath(exePath);
-                size_t lastSlash = fullPath.find_last_of(L"\\/");
-                if (lastSlash != std::wstring::npos) {
-                    fullPath = fullPath.substr(0, lastSlash + 1);
-                }
-                fullPath += dllPath;
-                
-                if (Injector::InjectDLL(pid, fullPath)) {
-                    std::wcout << L"Injection successful!" << std::endl;
-                } else {
-                    std::wcerr << L"Injection failed!" << std::endl;
-                }
-            } else if (key == 27) { // ESC
-                g_isRunning = false;
-            }
-        }
-        
         // Render frame if available
         RenderLoop();
         
@@ -103,8 +80,15 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
     
     // Cleanup
     CleanupIPC();
+    if (g_pUIManager) {
+        delete g_pUIManager;
+        g_pUIManager = nullptr;
+    }
     if (g_hWnd) {
         DestroyWindow(g_hWnd);
+    }
+    if (g_hMainWindow) {
+        DestroyWindow(g_hMainWindow);
     }
     
     std::wcout << L"\nSwiper shutting down..." << std::endl;
@@ -149,6 +133,39 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam) 
     return DefWindowProc(hwnd, uMsg, wParam, lParam);
 }
 
+LRESULT CALLBACK MainWindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam) {
+    switch (uMsg) {
+        case WM_DESTROY:
+            g_isRunning = false;
+            PostQuitMessage(0);
+            return 0;
+            
+        case WM_COMMAND:
+            if (g_pUIManager) {
+                g_pUIManager->OnCommand(wParam, lParam);
+            }
+            return 0;
+            
+        case WM_NOTIFY: {
+            NMHDR* pNmhdr = (NMHDR*)lParam;
+            if (pNmhdr->code == TCN_SELCHANGE && g_pUIManager) {
+                int newTab = TabCtrl_GetCurSel(pNmhdr->hwndFrom);
+                g_pUIManager->OnTabChanged(newTab);
+            }
+            return 0;
+        }
+            
+        case WM_PAINT: {
+            PAINTSTRUCT ps;
+            HDC hdc = BeginPaint(hwnd, &ps);
+            EndPaint(hwnd, &ps);
+            return 0;
+        }
+    }
+    
+    return DefWindowProc(hwnd, uMsg, wParam, lParam);
+}
+
 bool InitializeWindow(HINSTANCE hInstance) {
     // Register window class
     WNDCLASSEXW wc = {};
@@ -180,6 +197,50 @@ bool InitializeWindow(HINSTANCE hInstance) {
     
     ShowWindow(g_hWnd, SW_SHOW);
     UpdateWindow(g_hWnd);
+    
+    return true;
+}
+
+bool InitializeMainWindow(HINSTANCE hInstance) {
+    // Register window class
+    WNDCLASSEXW wc = {};
+    wc.cbSize = sizeof(WNDCLASSEXW);
+    wc.style = CS_HREDRAW | CS_VREDRAW;
+    wc.lpfnWndProc = MainWindowProc;
+    wc.hInstance = hInstance;
+    wc.hCursor = LoadCursor(nullptr, IDC_ARROW);
+    wc.hbrBackground = (HBRUSH)(COLOR_WINDOW + 1);
+    wc.lpszClassName = L"SwiperMainWindowClass";
+    
+    if (!RegisterClassExW(&wc)) {
+        return false;
+    }
+    
+    // Create main UI window
+    g_hMainWindow = CreateWindowExW(
+        0,
+        L"SwiperMainWindowClass",
+        L"Swiper Control Panel",
+        WS_OVERLAPPEDWINDOW,
+        CW_USEDEFAULT, CW_USEDEFAULT, 420, 360,
+        nullptr, nullptr, hInstance, nullptr
+    );
+    
+    if (!g_hMainWindow) {
+        return false;
+    }
+    
+    // Initialize UI manager
+    g_pUIManager = new UIManager();
+    if (!g_pUIManager->Initialize(g_hMainWindow, hInstance)) {
+        std::wcerr << L"Failed to initialize UI manager" << std::endl;
+        delete g_pUIManager;
+        g_pUIManager = nullptr;
+        return false;
+    }
+    
+    ShowWindow(g_hMainWindow, SW_SHOW);
+    UpdateWindow(g_hMainWindow);
     
     return true;
 }
