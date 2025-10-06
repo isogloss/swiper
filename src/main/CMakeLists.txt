@@ -4,6 +4,7 @@ cmake_minimum_required(VERSION 3.15)
 add_executable(swiper
     main.cpp
     injector.cpp
+    ui.cpp
 )
 
 # Add include directories
@@ -16,6 +17,7 @@ target_link_libraries(swiper PRIVATE
     kernel32
     user32
     gdi32
+    comctl32
 )
 
 # Set output name

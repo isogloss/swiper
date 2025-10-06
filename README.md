@@ -62,9 +62,15 @@ The capture library runs inside the target game's process and:
 **main.cpp**
 - Application entry point
 - Window creation and management
-- Process selection UI
+- UI integration and message handling
 - Render loop for projection window
 - Frame rendering logic
+
+**ui.h / ui.cpp**
+- Tab-based user interface with Settings and Projection tabs
+- Settings tab for FPS configuration and monitor selection
+- Projection tab with Start, Stop, and Inject buttons
+- UI state management and event handling
 
 **injector.h / injector.cpp**
 - DLL injection implementation
@@ -158,13 +164,33 @@ cmake .. -G "Visual Studio 16 2019" -A x64
 ```
 Then open `Swiper.sln` in Visual Studio and build.
 
+### Release Builds
+
+The project includes a GitHub Actions workflow that automatically builds the entire application when a new release is created:
+
+1. Create a new release on GitHub
+2. The workflow will automatically:
+   - Build both `swiper.exe` and `capture.dll`
+   - Package them for distribution
+   - Upload them as release assets
+
+To manually trigger a release build, create a git tag and push it:
+```bash
+git tag v1.0.0
+git push origin v1.0.0
+```
+
+Then create a release from the tag on GitHub.
+
 ## Development Roadmap
 
 ### Step 1: Basic Window & UI ✓
 - [x] Create main application window
 - [x] Implement basic Win32 message loop
-- [x] Add minimal UI for process selection
-- [ ] Test window creation and event handling
+- [x] Add tab-based UI with Settings and Projection tabs
+- [x] Settings tab: FPS configuration and monitor selection
+- [x] Projection tab: Start, Stop, and Inject buttons
+- [x] Test window creation and event handling
 
 ### Step 2: DLL Injection
 - [ ] Implement `CreateRemoteThread` injection method
@@ -244,13 +270,32 @@ Then open `Swiper.sln` in Visual Studio and build.
 
 ## Usage
 
-1. Launch `swiper.exe`
-2. Select target game process from list
-3. Click "Inject & Capture"
-4. Projection window will appear with captured game frames
-5. Move window to desired monitor
-6. Press F11 for fullscreen toggle
-7. Press ESC to stop capture and close
+### User Interface
+
+Swiper now includes a tabbed user interface with two main sections:
+
+#### Settings Tab
+- **FPS Configuration**: Set the target frames per second (1-144 FPS) for projection
+- **Monitor Selection**: Choose which monitor to display the projection on
+
+#### Projection Tab
+- **Start Projection**: Begin projecting captured frames
+- **Stop Projection**: Stop the projection
+- **Inject into Game**: Open the process selection dialog to inject the capture DLL
+
+### Quick Start
+
+1. Launch `swiper.exe` - You'll see the Control Panel window and a console window
+2. In the Control Panel, switch to the **Settings** tab:
+   - Configure your desired FPS (default: 60)
+   - Select the monitor for projection
+3. Switch to the **Projection** tab
+4. Click **"Inject into Game"** to select a process from the console
+5. Enter the process ID in the console when prompted
+6. Click **"Start Projection"** to begin capturing and displaying frames
+7. The projection window will show captured game frames
+8. Click **"Stop Projection"** when done
+9. Press ESC or close windows to exit
 
 ## Technical Notes
 
