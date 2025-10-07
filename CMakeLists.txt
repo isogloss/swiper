@@ -5,9 +5,26 @@ project(Swiper VERSION 1.0.0 LANGUAGES CXX)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
-# Set output directories
+# Set output directories for all configurations
+# For multi-configuration generators (like Visual Studio), this ensures
+# that outputs go directly to build/bin and build/lib instead of
+# build/bin/Debug, build/bin/Release, etc.
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
 set(CMAKE_LIBRARY_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/lib)
+
+# Set per-configuration output directories to prevent configuration subdirectories
+foreach(CONFIG ${CMAKE_CONFIGURATION_TYPES})
+    string(TOUPPER ${CONFIG} CONFIG_UPPER)
+    set(CMAKE_RUNTIME_OUTPUT_DIRECTORY_${CONFIG_UPPER} ${CMAKE_BINARY_DIR}/bin)
+    set(CMAKE_LIBRARY_OUTPUT_DIRECTORY_${CONFIG_UPPER} ${CMAKE_BINARY_DIR}/lib)
+endforeach()
+
+# Also handle single-configuration generators
+if(CMAKE_BUILD_TYPE)
+    string(TOUPPER ${CMAKE_BUILD_TYPE} BUILD_TYPE_UPPER)
+    set(CMAKE_RUNTIME_OUTPUT_DIRECTORY_${BUILD_TYPE_UPPER} ${CMAKE_BINARY_DIR}/bin)
+    set(CMAKE_LIBRARY_OUTPUT_DIRECTORY_${BUILD_TYPE_UPPER} ${CMAKE_BINARY_DIR}/lib)
+endif()
 
 # Windows specific settings
 if(WIN32)
