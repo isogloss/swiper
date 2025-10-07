@@ -19,6 +19,16 @@ target_link_libraries(capture_dll PRIVATE
     dxgi
 )
 
+# Conditionally add MinHook if found
+if(MINHOOK_FOUND)
+    target_include_directories(capture_dll PRIVATE ${MINHOOK_INCLUDE_DIR})
+    target_link_libraries(capture_dll PRIVATE ${MINHOOK_LIBRARY})
+    target_compile_definitions(capture_dll PRIVATE MINHOOK_AVAILABLE)
+    message(STATUS "capture_dll: MinHook support enabled")
+else()
+    message(STATUS "capture_dll: Building without MinHook support")
+endif()
+
 # Set output name
 set_target_properties(capture_dll PROPERTIES
     OUTPUT_NAME "capture"
