@@ -13,7 +13,9 @@
 // Global variables
 HWND g_hWnd = nullptr;
 HWND g_hMainWindow = nullptr;
+HINSTANCE g_hInstance = nullptr;
 bool g_isRunning = true;
+bool g_isWindowClassRegistered = false;
 
 // IPC using RAII wrappers from ipc.h
 UniqueHandle g_hSharedMemory;
@@ -31,6 +33,8 @@ bool InitializeIPC();
 void CleanupIPC();
 void RenderLoop();
 void ProcessSelection();
+bool CreateProjectionWindow();
+void DestroyProjectionWindow();
 
 int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nCmdShow) {
 #ifdef IMGUI_AVAILABLE
@@ -48,6 +52,9 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
     std::wcout << L"==========================================" << std::endl;
     std::wcout << L"Initializing..." << std::endl;
     
+    // Store instance handle globally
+    g_hInstance = hInstance;
+    
     // Initialize IPC
     if (!InitializeIPC()) {
         std::wcerr << L"Failed to initialize IPC" << std::endl;
@@ -61,15 +68,25 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
         return 1;
     }
     
-    // Initialize projection window
-    if (!InitializeWindow(hInstance)) {
-        std::wcerr << L"Failed to initialize projection window" << std::endl;
-        CleanupIPC();
-        return 1;
+    // Register projection window class (but don't create the window yet)
+    WNDCLASSEXW wc = {};
+    wc.cbSize = sizeof(WNDCLASSEXW);
+    wc.style = CS_HREDRAW | CS_VREDRAW;
+    wc.lpfnWndProc = WindowProc;
+    wc.hInstance = hInstance;
+    wc.hCursor = LoadCursor(nullptr, IDC_ARROW);
+    wc.hbrBackground = (HBRUSH)GetStockObject(BLACK_BRUSH);
+    wc.lpszClassName = L"SwiperWindowClass";
+    
+    if (RegisterClassExW(&wc)) {
+        g_isWindowClassRegistered = true;
+        std::wcout << L"Projection window class registered successfully" << std::endl;
+    } else {
+        std::wcerr << L"Failed to register projection window class" << std::endl;
     }
     
-    std::wcout << L"Windows created successfully" << std::endl;
-    std::wcout << L"\nUI is ready - use the Settings and Projection tabs" << std::endl;
+    std::wcout << L"Main window created successfully" << std::endl;
+    std::wcout << L"\nUI is ready - enter license key in the License tab" << std::endl;
     
     // Main message loop
     MSG msg = {};
@@ -114,13 +131,17 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
 LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam) {
     switch (uMsg) {
         case WM_DESTROY:
-            g_isRunning = false;
-            PostQuitMessage(0);
+            // Don't quit the entire application, just close this window
+            g_hWnd = nullptr;
             return 0;
             
         case WM_KEYDOWN:
             if (wParam == VK_ESCAPE) {
-                g_isRunning = false;
+                // Close projection window on ESC
+                DestroyProjectionWindow();
+                if (g_pUIManager) {
+                    g_pUIManager->OnStopProjection();
+                }
             }
             return 0;
             
@@ -360,4 +381,71 @@ void ProcessSelection() {
     }
     
     std::wcout << L"\nTotal processes: " << processes.size() << std::endl;
+}
+
+bool CreateProjectionWindow() {
+    if (g_hWnd != nullptr) {
+        // Window already exists
+        ShowWindow(g_hWnd, SW_SHOW);
+        UpdateWindow(g_hWnd);
+        return true;
+    }
+    
+    if (!g_isWindowClassRegistered) {
+        std::wcerr << L"Window class not registered" << std::endl;
+        return false;
+    }
+    
+    // Get monitor information from UI manager
+    if (!g_pUIManager) {
+        std::wcerr << L"UI Manager not initialized" << std::endl;
+        return false;
+    }
+    
+    const auto& config = g_pUIManager->GetConfig();
+    const auto& monitors = g_pUIManager->GetMonitors();
+    
+    if (config.selectedMonitor < 0 || config.selectedMonitor >= (int)monitors.size()) {
+        std::wcerr << L"Invalid monitor selection" << std::endl;
+        return false;
+    }
+    
+    // Get selected monitor rect
+    const MonitorInfo& monitorInfo = monitors[config.selectedMonitor];
+    int x = monitorInfo.rect.left;
+    int y = monitorInfo.rect.top;
+    int width = monitorInfo.rect.right - monitorInfo.rect.left;
+    int height = monitorInfo.rect.bottom - monitorInfo.rect.top;
+    
+    std::wcout << L"Creating fullscreen projection window on monitor " << config.selectedMonitor + 1 << std::endl;
+    std::wcout << L"Position: (" << x << L", " << y << L"), Size: " << width << L"x" << height << std::endl;
+    
+    // Create borderless fullscreen window on selected monitor
+    g_hWnd = CreateWindowExW(
+        WS_EX_TOPMOST,
+        L"SwiperWindowClass",
+        L"Swiper Projection",
+        WS_POPUP,
+        x, y, width, height,
+        nullptr, nullptr, g_hInstance, nullptr
+    );
+    
+    if (!g_hWnd) {
+        std::wcerr << L"Failed to create projection window: " << GetLastError() << std::endl;
+        return false;
+    }
+    
+    ShowWindow(g_hWnd, SW_SHOW);
+    UpdateWindow(g_hWnd);
+    
+    std::wcout << L"Projection window created successfully" << std::endl;
+    return true;
+}
+
+void DestroyProjectionWindow() {
+    if (g_hWnd) {
+        std::wcout << L"Destroying projection window" << std::endl;
+        DestroyWindow(g_hWnd);
+        g_hWnd = nullptr;
+    }
 }
