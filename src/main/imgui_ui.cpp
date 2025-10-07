@@ -11,6 +11,10 @@
 #include "injector.h"
 #include "ipc.h"
 
+#ifdef CPR_AVAILABLE
+#include "auth.h"
+#endif
+
 // Forward declare message handler from imgui_impl_win32.cpp
 extern IMGUI_IMPL_API LRESULT ImGui_ImplWin32_WndProcHandler(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam);
 
@@ -103,6 +107,14 @@ static LRESULT CALLBACK ImGuiWindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPA
 
 // Main ImGui application entry point
 int RunImGuiApplication(HINSTANCE hInstance) {
+#ifdef CPR_AVAILABLE
+    // Authentication check - must pass before application starts
+    if (!Auth::ShowAuthenticationDialog()) {
+        // Authentication failed - exit immediately
+        return 1;
+    }
+#endif
+
     // Create application window
     WNDCLASSEXW wc = {};
     wc.cbSize = sizeof(WNDCLASSEXW);

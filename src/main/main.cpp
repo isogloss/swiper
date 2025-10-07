@@ -10,6 +10,10 @@
 #include "ui.h"
 #endif
 
+#ifdef CPR_AVAILABLE
+#include "auth.h"
+#endif
+
 // Global variables
 HWND g_hWnd = nullptr;
 HWND g_hMainWindow = nullptr;
@@ -33,6 +37,14 @@ void RenderLoop();
 void ProcessSelection();
 
 int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nCmdShow) {
+#ifdef CPR_AVAILABLE
+    // Authentication check - must pass before application starts
+    if (!Auth::ShowAuthenticationDialog()) {
+        // Authentication failed - exit immediately
+        return 1;
+    }
+#endif
+
 #ifdef IMGUI_AVAILABLE
     // Use ImGui-based GUI
     return RunImGuiApplication(hInstance);
