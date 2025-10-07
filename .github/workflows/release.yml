@@ -35,27 +35,12 @@ jobs:
         copy build\bin\Release\swiper.exe release-package\
         copy build\lib\Release\capture.dll release-package\
         
-    - name: Package as Single Executable
+    - name: Create ZIP Archive
       run: |
         cd release-package
-        echo "Swiper.exe and capture.dll packaged for release"
+        powershell Compress-Archive -Path * -DestinationPath ../swiper-windows.zip
         
-    - name: Upload Release Assets
-      uses: actions/upload-release-asset@v1
-      env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    - name: Upload Release Asset
+      uses: softprops/action-gh-release@v2
       with:
-        upload_url: ${{ github.event.release.upload_url }}
-        asset_path: ./release-package/swiper.exe
-        asset_name: swiper.exe
-        asset_content_type: application/octet-stream
-        
-    - name: Upload DLL Asset
-      uses: actions/upload-release-asset@v1
-      env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      with:
-        upload_url: ${{ github.event.release.upload_url }}
-        asset_path: ./release-package/capture.dll
-        asset_name: capture.dll
-        asset_content_type: application/octet-stream
+        files: swiper-windows.zip
