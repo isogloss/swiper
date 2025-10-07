@@ -32,8 +32,8 @@ jobs:
     - name: Create Release Package
       run: |
         mkdir release-package
-        copy build\bin\Release\swiper.exe release-package\
-        copy build\lib\Release\capture.dll release-package\
+        copy build\Release\swiper.exe release-package\
+        copy build\Release\capture.dll release-package\
         
     - name: Create ZIP Archive
       run: |
