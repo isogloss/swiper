@@ -7,7 +7,9 @@ UIManager* g_pUIManager = nullptr;
 
 // Monitor enumeration callback
 static BOOL CALLBACK MonitorEnumProc(HMONITOR hMonitor, HDC hdcMonitor, LPRECT lprcMonitor, LPARAM dwData) {
-    std::vector<std::wstring>* monitors = (std::vector<std::wstring>*)dwData;
+    auto* data = (std::pair<std::vector<std::wstring>*, std::vector<MonitorInfo>*>*)dwData;
+    std::vector<std::wstring>* monitors = data->first;
+    std::vector<MonitorInfo>* monitorInfos = data->second;
     
     MONITORINFOEXW monitorInfo;
     monitorInfo.cbSize = sizeof(MONITORINFOEXW);
@@ -16,6 +18,12 @@ static BOOL CALLBACK MonitorEnumProc(HMONITOR hMonitor, HDC hdcMonitor, LPRECT l
         std::wstringstream ss;
         ss << L"Monitor " << (monitors->size() + 1) << L": " << monitorInfo.szDevice;
         monitors->push_back(ss.str());
+        
+        MonitorInfo info;
+        info.hMonitor = hMonitor;
+        info.rect = monitorInfo.rcMonitor;
+        info.name = monitorInfo.szDevice;
+        monitorInfos->push_back(info);
     }
     
     return TRUE;
@@ -25,6 +33,7 @@ UIManager::UIManager()
     : m_hTabControl(nullptr)
     , m_hSettingsTab(nullptr)
     , m_hProjectionTab(nullptr)
+    , m_hLicenseTab(nullptr)
     , m_hFPSLabel(nullptr)
     , m_hFPSEdit(nullptr)
     , m_hFPSUpDown(nullptr)
@@ -34,8 +43,13 @@ UIManager::UIManager()
     , m_hStopButton(nullptr)
     , m_hInjectButton(nullptr)
     , m_hStatusLabel(nullptr)
+    , m_hLicenseKeyLabel(nullptr)
+    , m_hLicenseKeyEdit(nullptr)
+    , m_hValidateButton(nullptr)
+    , m_hLicenseStatusLabel(nullptr)
     , m_currentTab(0)
-    , m_isProjectionRunning(false) {
+    , m_isProjectionRunning(false)
+    , m_isLicenseValid(false) {
 }
 
 UIManager::~UIManager() {
@@ -58,6 +72,10 @@ bool UIManager::Initialize(HWND hParent, HINSTANCE hInstance) {
     }
     
     // Create tabs
+    if (!CreateLicenseTab(hParent, hInstance)) {
+        return false;
+    }
+    
     if (!CreateSettingsTab(hParent, hInstance)) {
         return false;
     }
@@ -66,8 +84,11 @@ bool UIManager::Initialize(HWND hParent, HINSTANCE hInstance) {
         return false;
     }
     
-    // Show settings tab by default
+    // Show license tab by default
     OnTabChanged(0);
+    
+    // Disable projection and inject features until license is validated
+    UpdateProjectionState(false);
     
     return true;
 }
@@ -78,10 +99,24 @@ void UIManager::Cleanup() {
 
 void UIManager::EnumerateMonitors() {
     m_config.availableMonitors.clear();
-    EnumDisplayMonitors(nullptr, nullptr, MonitorEnumProc, (LPARAM)&m_config.availableMonitors);
+    m_monitors.clear();
+    
+    auto data = std::make_pair(&m_config.availableMonitors, &m_monitors);
+    EnumDisplayMonitors(nullptr, nullptr, MonitorEnumProc, (LPARAM)&data);
     
     if (m_config.availableMonitors.empty()) {
         m_config.availableMonitors.push_back(L"Primary Monitor");
+        
+        // Add default primary monitor info
+        MonitorInfo info;
+        info.hMonitor = MonitorFromPoint({0, 0}, MONITOR_DEFAULTTOPRIMARY);
+        MONITORINFO mi;
+        mi.cbSize = sizeof(MONITORINFO);
+        if (GetMonitorInfo(info.hMonitor, &mi)) {
+            info.rect = mi.rcMonitor;
+        }
+        info.name = L"Primary Monitor";
+        m_monitors.push_back(info);
     }
 }
 
@@ -107,11 +142,87 @@ bool UIManager::CreateTabControl(HWND hParent) {
     TCITEMW tie;
     tie.mask = TCIF_TEXT;
     
-    tie.pszText = (LPWSTR)L"Settings";
+    tie.pszText = (LPWSTR)L"License";
     TabCtrl_InsertItem(m_hTabControl, 0, &tie);
     
-    tie.pszText = (LPWSTR)L"Projection";
+    tie.pszText = (LPWSTR)L"Settings";
     TabCtrl_InsertItem(m_hTabControl, 1, &tie);
+    
+    tie.pszText = (LPWSTR)L"Projection";
+    TabCtrl_InsertItem(m_hTabControl, 2, &tie);
+    
+    return true;
+}
+
+bool UIManager::CreateLicenseTab(HWND hParent, HINSTANCE hInstance) {
+    // Create license tab container
+    m_hLicenseTab = CreateWindowExW(
+        0,
+        L"STATIC",
+        L"",
+        WS_CHILD,
+        20, 40, 360, 240,
+        hParent,
+        nullptr,
+        hInstance,
+        nullptr
+    );
+    
+    if (!m_hLicenseTab) {
+        return false;
+    }
+    
+    // License Key Label
+    m_hLicenseKeyLabel = CreateWindowExW(
+        0,
+        L"STATIC",
+        L"Enter License Key:",
+        WS_CHILD | WS_VISIBLE,
+        10, 20, 200, 20,
+        m_hLicenseTab,
+        nullptr,
+        hInstance,
+        nullptr
+    );
+    
+    // License Key Edit Control
+    m_hLicenseKeyEdit = CreateWindowExW(
+        WS_EX_CLIENTEDGE,
+        L"EDIT",
+        L"",
+        WS_CHILD | WS_VISIBLE | ES_UPPERCASE,
+        10, 45, 300, 25,
+        m_hLicenseTab,
+        (HMENU)ID_LICENSE_KEY_EDIT,
+        hInstance,
+        nullptr
+    );
+    
+    // Validate Button
+    m_hValidateButton = CreateWindowExW(
+        0,
+        L"BUTTON",
+        L"Validate License",
+        WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON,
+        10, 80, 150, 35,
+        m_hLicenseTab,
+        (HMENU)ID_VALIDATE_BUTTON,
+        hInstance,
+        nullptr
+    );
+    
+    // License Status Label
+    m_hLicenseStatusLabel = CreateWindowExW(
+        0,
+        L"STATIC",
+        L"Status: No license entered\n\nPlease enter a valid license key to\nunlock projection and injection features.",
+        WS_CHILD | WS_VISIBLE,
+        10, 130, 340, 80,
+        m_hLicenseTab,
+        nullptr,
+        hInstance,
+        nullptr
+    );
     
     return true;
 }
@@ -289,13 +400,16 @@ void UIManager::OnTabChanged(int newTab) {
     m_currentTab = newTab;
     
     // Hide all tabs
+    ShowWindow(m_hLicenseTab, SW_HIDE);
     ShowWindow(m_hSettingsTab, SW_HIDE);
     ShowWindow(m_hProjectionTab, SW_HIDE);
     
     // Show selected tab
     if (newTab == 0) {
-        ShowWindow(m_hSettingsTab, SW_SHOW);
+        ShowWindow(m_hLicenseTab, SW_SHOW);
     } else if (newTab == 1) {
+        ShowWindow(m_hSettingsTab, SW_SHOW);
+    } else if (newTab == 2) {
         ShowWindow(m_hProjectionTab, SW_SHOW);
     }
 }
@@ -306,7 +420,9 @@ void UIManager::OnCommand(WPARAM wParam, LPARAM lParam) {
     
     switch (controlId) {
         case ID_START_BUTTON:
-            OnStartProjection();
+            if (m_isLicenseValid) {
+                OnStartProjection();
+            }
             break;
             
         case ID_STOP_BUTTON:
@@ -314,7 +430,13 @@ void UIManager::OnCommand(WPARAM wParam, LPARAM lParam) {
             break;
             
         case ID_INJECT_BUTTON:
-            OnInject();
+            if (m_isLicenseValid) {
+                OnInject();
+            }
+            break;
+            
+        case ID_VALIDATE_BUTTON:
+            OnValidateLicense();
             break;
             
         case ID_FPS_EDIT:
@@ -339,13 +461,24 @@ void UIManager::OnStartProjection() {
     std::wcout << L"Starting projection at " << m_config.fps << L" FPS on monitor " 
               << m_config.selectedMonitor << std::endl;
     
-    m_isProjectionRunning = true;
-    UpdateProjectionState(true);
-    SetWindowTextW(m_hStatusLabel, L"Status: Projection Running");
+    // Create and show projection window
+    extern bool CreateProjectionWindow();
+    if (CreateProjectionWindow()) {
+        m_isProjectionRunning = true;
+        UpdateProjectionState(true);
+        SetWindowTextW(m_hStatusLabel, L"Status: Projection Running");
+    } else {
+        SetWindowTextW(m_hStatusLabel, L"Status: Failed to start projection");
+        std::wcerr << L"Failed to create projection window" << std::endl;
+    }
 }
 
 void UIManager::OnStopProjection() {
     std::wcout << L"Stopping projection" << std::endl;
+    
+    // Destroy projection window
+    extern void DestroyProjectionWindow();
+    DestroyProjectionWindow();
     
     m_isProjectionRunning = false;
     UpdateProjectionState(false);
@@ -363,6 +496,52 @@ void UIManager::OnInject() {
 
 void UIManager::UpdateProjectionState(bool isRunning) {
     m_isProjectionRunning = isRunning;
-    EnableWindow(m_hStartButton, !isRunning);
-    EnableWindow(m_hStopButton, isRunning);
+    EnableWindow(m_hStartButton, !isRunning && m_isLicenseValid);
+    EnableWindow(m_hStopButton, isRunning && m_isLicenseValid);
+    EnableWindow(m_hInjectButton, m_isLicenseValid && !isRunning);
+}
+
+void UIManager::OnValidateLicense() {
+    wchar_t licenseKey[256];
+    GetWindowTextW(m_hLicenseKeyEdit, licenseKey, 256);
+    
+    if (ValidateLicenseKey(licenseKey)) {
+        m_isLicenseValid = true;
+        SetWindowTextW(m_hLicenseStatusLabel, 
+            L"Status: License Valid!\n\nAll features unlocked.\nYou can now use projection and injection.");
+        
+        // Enable projection and inject buttons
+        EnableWindow(m_hStartButton, TRUE);
+        EnableWindow(m_hInjectButton, TRUE);
+        
+        std::wcout << L"License validated successfully!" << std::endl;
+    } else {
+        m_isLicenseValid = false;
+        SetWindowTextW(m_hLicenseStatusLabel, 
+            L"Status: Invalid License Key\n\nPlease enter a valid license key.\nExample: SWIPER-XXXX-XXXX-XXXX");
+        
+        // Disable projection and inject buttons
+        EnableWindow(m_hStartButton, FALSE);
+        EnableWindow(m_hStopButton, FALSE);
+        EnableWindow(m_hInjectButton, FALSE);
+        
+        std::wcout << L"License validation failed!" << std::endl;
+    }
+}
+
+bool UIManager::ValidateLicenseKey(const std::wstring& key) {
+    // Simple validation: check for specific pattern
+    // In a real application, this would validate against a server or use cryptographic signatures
+    
+    // Accept keys in format: SWIPER-XXXX-XXXX-XXXX
+    if (key.length() < 10) {
+        return false;
+    }
+    
+    // For demo purposes, accept any key that starts with "SWIPER-" or is "DEMO-KEY"
+    if (key.find(L"SWIPER-") == 0 || key == L"DEMO-KEY" || key == L"TEST-LICENSE") {
+        return true;
+    }
+    
+    return false;
 }
