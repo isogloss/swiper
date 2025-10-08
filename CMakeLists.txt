@@ -85,6 +85,17 @@ else()
     set(MINHOOK_FOUND FALSE)
 endif()
 
+# Try to find cpr library via find_package (vcpkg or system install)
+find_package(cpr CONFIG QUIET)
+if(cpr_FOUND)
+    message(STATUS "Found cpr library via find_package")
+    set(CPR_FOUND TRUE)
+else()
+    message(STATUS "cpr library not found. Authentication features will be disabled.")
+    message(STATUS "To enable authentication, install cpr via vcpkg: 'vcpkg install cpr'")
+    set(CPR_FOUND FALSE)
+endif()
+
 # Add subdirectories
 add_subdirectory(src/main)
 add_subdirectory(src/capture_dll)

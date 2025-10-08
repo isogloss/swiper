@@ -41,6 +41,15 @@ target_link_libraries(swiper PRIVATE
     dxgi
 )
 
+# Conditionally link cpr if found
+if(CPR_FOUND)
+    target_link_libraries(swiper PRIVATE cpr::cpr)
+    target_compile_definitions(swiper PRIVATE CPR_AVAILABLE)
+    message(STATUS "swiper: Authentication support enabled")
+else()
+    message(STATUS "swiper: Building without authentication support")
+endif()
+
 # Set output name
 set_target_properties(swiper PROPERTIES
     OUTPUT_NAME "swiper"
